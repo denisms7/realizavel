@@ -1,9 +1,9 @@
 """
 Fonte de dados - Prefeitura de Centenário do Sul
 ==================================================
-Página auxiliar (multipage do Streamlit) que lista cada PDF oficial exportado
-pelo sistema junto do seu CSV correspondente, usado pelos apps de comparação
-(Liquidado x Pago / Empenhado x Liquidado x Pago).
+Página que lista cada PDF oficial exportado pelo sistema junto do seu CSV
+correspondente, usado pelos apps de comparação (Liquidado x Pago /
+Empenhado x Liquidado x Pago).
 
 A correspondência é feita pelo nome do arquivo: o PDF
 "pdf/<nome>.pdf" tem como par o CSV "data/<nome>.csv".
@@ -12,12 +12,6 @@ A correspondência é feita pelo nome do arquivo: o PDF
 import os
 
 import streamlit as st
-
-st.set_page_config(
-    page_title="Fonte de dados - Centenário do Sul",
-    page_icon="📄",
-    layout="wide",
-)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PDF_DIR = os.path.join(BASE_DIR, "pdf")
