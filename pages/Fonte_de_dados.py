@@ -17,6 +17,8 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PDF_DIR = os.path.join(BASE_DIR, "pdf")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
+ROW_COLS = [4, 1, 1]
+
 st.title("📄 Fonte de dados")
 st.caption(
     "Cada relatório abaixo é o PDF oficial exportado pelo sistema, junto do CSV "
@@ -40,41 +42,49 @@ if not pdf_files:
     st.warning(f"Nenhum PDF encontrado em {PDF_DIR}")
     st.stop()
 
+header_name, header_pdf, header_csv = st.columns(ROW_COLS, vertical_alignment="center")
+header_name.markdown("**Relatório**")
+header_pdf.markdown("**PDF**")
+header_csv.markdown("**CSV**")
+st.divider()
+
 for pdf_name in pdf_files:
     pdf_path = os.path.join(PDF_DIR, pdf_name)
     csv_path = find_csv_for_pdf(pdf_name)
 
-    st.subheader(pdf_name)
-    col_pdf, col_csv = st.columns(2)
+    col_name, col_pdf, col_csv = st.columns(ROW_COLS, vertical_alignment="center")
+
+    with col_name:
+        st.write(pdf_name)
 
     with col_pdf:
-        st.markdown("**PDF original**")
         with open(pdf_path, "rb") as f:
             pdf_bytes = f.read()
+        size_mb = os.path.getsize(pdf_path) / (1024 * 1024)
         st.download_button(
-            "⬇️ Baixar PDF",
+            "⬇️ PDF",
             data=pdf_bytes,
             file_name=pdf_name,
             mime="application/pdf",
             key=f"dl_pdf_{pdf_name}",
+            help=f"{size_mb:.1f} MB",
             width="stretch",
         )
 
     with col_csv:
-        st.markdown("**CSV correspondente**")
         if csv_path is None:
-            st.error("Nenhum CSV correspondente encontrado em data/.")
+            st.caption("CSV não encontrado")
         else:
-            st.caption(os.path.basename(csv_path))
             with open(csv_path, "rb") as f:
                 csv_bytes = f.read()
             st.download_button(
-                "⬇️ Baixar CSV",
+                "⬇️ CSV",
                 data=csv_bytes,
                 file_name=os.path.basename(csv_path),
                 mime="text/csv",
                 key=f"dl_csv_{pdf_name}",
+                help=os.path.basename(csv_path),
                 width="stretch",
             )
 
-    st.markdown("---")
+    st.divider()

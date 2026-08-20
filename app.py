@@ -27,7 +27,7 @@ st.set_page_config(
 )
 
 pages = {
-    "➡️ Despesas": [
+    "➡️ Realizável": [
         st.Page("pages/liquidado_x_pago.py", title="Liquidado x Pago"),
         # st.Page("pages/empenhado_liquidado_pago.py", title="Empenhado x Liquidado x Pago"),
         st.Page("pages/fonte_de_dados.py", title="Fonte de Dados"),
