@@ -231,11 +231,7 @@ def build_comparison(emp: pd.DataFrame, liq: pd.DataFrame, pag: pd.DataFrame, to
 # ---------------------------------------------------------------------------
 st.sidebar.title("🧾 Configuração")
 
-default_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
-data_dir = st.sidebar.text_input("Pasta com os CSVs", value=default_dir)
-
-if st.sidebar.button("🔄 Recarregar dados"):
-    st.cache_data.clear()
+data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 if not os.path.isdir(data_dir):
     st.error(f"Pasta não encontrada: {data_dir}")
@@ -249,16 +245,6 @@ if emp.empty and liq.empty and pag.empty:
         "e/ou 'paga' no nome dentro da pasta configurada."
     )
     st.stop()
-
-st.sidebar.caption(f"Empenhada: {len(empenhada_files)} arquivo(s)")
-for f in empenhada_files:
-    st.sidebar.caption(f"　• {os.path.basename(f)}")
-st.sidebar.caption(f"Liquidada: {len(liquidada_files)} arquivo(s)")
-for f in liquidada_files:
-    st.sidebar.caption(f"　• {os.path.basename(f)}")
-st.sidebar.caption(f"Paga: {len(paga_files)} arquivo(s)")
-for f in paga_files:
-    st.sidebar.caption(f"　• {os.path.basename(f)}")
 
 tol = st.sidebar.number_input(
     "Tolerância para considerar 'igual' (R$)", min_value=0.0, value=0.01, step=0.01,
@@ -274,7 +260,8 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("Filtros")
 
 anos_disponiveis = sorted(comp["Ano"].dropna().unique().tolist())
-anos_sel = st.sidebar.multiselect("Ano (do Empenho)", anos_disponiveis, default=anos_disponiveis)
+anos_default = ["2022"] if "2022" in anos_disponiveis else anos_disponiveis
+anos_sel = st.sidebar.multiselect("Ano (do Empenho)", anos_disponiveis, default=anos_default)
 
 status_sel = st.sidebar.multiselect(
     "Status", list(STATUS_COLORS.keys()), default=list(STATUS_COLORS.keys())
