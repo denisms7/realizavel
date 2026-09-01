@@ -9,7 +9,7 @@ st.set_page_config(
 pages = {
     "➡️ Realizável": [
         st.Page("pages/liquidado_x_pago.py", title="Liquidado x Pago"),
-        st.Page("pages/Fonte_de_dados.py", title="Fonte de Dados"),
+        st.Page("pages/00_fonte_dados.py", title="Fonte de Dados"),
     ],
 }
 
