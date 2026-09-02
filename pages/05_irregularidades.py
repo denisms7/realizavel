@@ -1,4 +1,6 @@
 """Testes de auditoria cruzando Empenhos x Liquidações x Pagamentos."""
+import inspect
+
 import pandas as pd
 import streamlit as st
 
@@ -40,6 +42,13 @@ dias_pagto = st.sidebar.number_input(
          "Com N > 0, aponta também pagamentos feitos em menos de N dias após a liquidação (útil para checar prazo mínimo de conferência).",
 )
 
+incluir_estornos = st.sidebar.toggle(
+    "Considerar lançamentos de estorno", value=False,
+    help="**Desligado** (padrão): os testes analisam apenas os lançamentos normais — estornos e anulações ficam de fora. "
+         "**Ligado**: os estornos também entram nos testes e aparecem marcados na coluna **Estorno** de cada tabela. "
+         "Os cruzamentos de valor (pago x liquidado x empenhado) usam totais líquidos e já consideram os estornos nos dois casos.",
+)
+
 if not sel_anos:
     st.warning("Selecione ao menos um exercício.")
     st.stop()
@@ -47,7 +56,10 @@ if not sel_anos:
 e = emp[emp["ANO"].isin(sel_anos)]
 l = liq[liq["ANO"].isin(sel_anos)]
 p = pag[pag["ANO"].isin(sel_anos)]
-en, ln, pn = e[~e["ESTORNO"]], l[~l["ESTORNO"]], p[~p["ESTORNO"]]
+if incluir_estornos:
+    en, ln, pn = e, l, p
+else:
+    en, ln, pn = e[~e["ESTORNO"]], l[~l["ESTORNO"]], p[~p["ESTORNO"]]
 
 # Totais líquidos por chave (considerando estornos), usando as bases COMPLETAS
 # para não perder empenhos/liquidações de exercícios anteriores (restos a pagar).
@@ -59,24 +71,26 @@ data_emp = emp[~emp["ESTORNO"]].groupby("EMPENHO")["DATA"].min()
 data_liq = liq[~liq["ESTORNO"]].groupby("LIQUIDACAO")["DATA"].min()
 info_emp = emp[~emp["ESTORNO"]].drop_duplicates("EMPENHO").set_index("EMPENHO")[["DATA", "FORNECEDOR_NOME", "NATUREZA", "UNIDADE", "DESCRICAO"]]
 
-testes: list[tuple[str, str, pd.DataFrame, str]] = []  # (título, gravidade, tabela, explicação)
+testes: list[tuple[str, str, pd.DataFrame, str, str]] = []  # (título, gravidade, tabela, explicação, método)
 
 # 1. Pagamento sem liquidação ---------------------------------------------------
 t = pn[~pn["LIQUIDACAO"].isin(liq["LIQUIDACAO"])]
 testes.append((
     "Pagamento sem liquidação correspondente", "alta",
-    t[["DATA", "PAGAMENTO", "LIQUIDACAO", "EMPENHO", "FORNECEDOR_NOME", "VALOR_PAGO", "RETENCOES", "LIQUIDO"]],
+    t[["ESTORNO", "DATA", "PAGAMENTO", "LIQUIDACAO", "EMPENHO", "FORNECEDOR_NOME", "VALOR_PAGO", "RETENCOES", "LIQUIDO"]],
     "Pagamento cuja liquidação não existe em nenhuma base carregada. Viola a ordem empenho → liquidação → pagamento "
     "(art. 62 e 63 da Lei 4.320/64). Pode ser liquidação anterior a 2013.",
+    "**Base:** Pagamentos do(s) exercício(s) selecionado(s).\n\n**Regra:** a `LIQUIDACAO` citada pelo pagamento não aparece na base de Liquidações **completa** (todos os anos). Nenhum valor é somado — é um teste de existência de chave.",
 ))
 
 # 2. Liquidação sem empenho -----------------------------------------------------
 t = ln[~ln["EMPENHO"].isin(emp["EMPENHO"])]
 testes.append((
     "Liquidação sem empenho correspondente", "alta",
-    t[["DATA", "LIQUIDACAO", "EMPENHO", "FORNECEDOR_NOME", "VALOR", "TIPO_DOCUMENTO", "DESCRICAO"]],
+    t[["ESTORNO", "DATA", "LIQUIDACAO", "EMPENHO", "FORNECEDOR_NOME", "VALOR", "TIPO_DOCUMENTO", "DESCRICAO"]],
     "Liquidação referenciando empenho inexistente nas bases (art. 60 da Lei 4.320/64 veda despesa sem prévio empenho). "
     "Pode ser empenho anterior a 2013.",
+    "**Base:** Liquidações do(s) exercício(s) selecionado(s).\n\n**Regra:** o `EMPENHO` citado pela liquidação não existe na base de Empenhos **completa** (todos os anos). Teste de existência de chave, sem soma de valores.",
 ))
 
 # 3. Pago acima do liquidado ----------------------------------------------------
@@ -88,6 +102,7 @@ t = t.join(pn.drop_duplicates("LIQUIDACAO").set_index("LIQUIDACAO")[["EMPENHO", 
 testes.append((
     "Pagamento acumulado superior ao valor liquidado", "alta", t,
     "Soma dos pagamentos (líquida de estornos) maior que a soma das liquidações da mesma chave.",
+    "**Chave:** `LIQUIDACAO`.\n\n**Regra:** soma o `VALOR_PAGO` de todos os pagamentos da chave e o `VALOR` de todas as liquidações da mesma chave, sempre nas bases completas e **com os estornos entrando com sinal negativo** (portanto são totais líquidos). Aponta quando PAGO − LIQUIDADO passa da tolerância de valor definida na barra lateral.",
 ))
 
 # 4. Liquidado acima do empenhado -----------------------------------------------
@@ -100,6 +115,7 @@ testes.append((
     "Liquidação acumulada superior ao valor empenhado", "alta", t,
     "Soma das liquidações (líquida de estornos) maior que o saldo empenhado (empenho menos anulações). "
     "Indica despesa realizada sem cobertura de empenho ou reforço não registrado.",
+    "**Chave:** `EMPENHO`.\n\n**Regra:** soma o `VALOR` das liquidações e o `VALOR` dos empenhos da chave, nas bases completas e líquidos de estornos/anulações. Aponta quando LIQUIDADO − EMPENHADO passa da tolerância de valor.",
 ))
 
 # 5. Pagamento antes da liquidação ----------------------------------------------
@@ -109,8 +125,9 @@ t = t.assign(DIAS=(t["DATA"] - t["DATA_LIQUIDACAO"]).dt.days)
 t = t[t["DIAS"] < dias_pagto] if dias_pagto > 0 else t[t["DIAS"] < 0]
 testes.append((
     "Pagamento anterior à data da liquidação", "alta",
-    t[["DATA", "DATA_LIQUIDACAO", "DIAS", "PAGAMENTO", "LIQUIDACAO", "EMPENHO", "FORNECEDOR_NOME", "VALOR_PAGO"]].sort_values("DIAS"),
+    t[["ESTORNO", "DATA", "DATA_LIQUIDACAO", "DIAS", "PAGAMENTO", "LIQUIDACAO", "EMPENHO", "FORNECEDOR_NOME", "VALOR_PAGO"]].sort_values("DIAS"),
     "A data do pagamento é anterior à data da liquidação a que se refere (art. 62 da Lei 4.320/64).",
+    "**Regra:** a data da liquidação é a **menor** `DATA` entre os lançamentos normais daquela `LIQUIDACAO` (base completa). DIAS = data do pagamento − data da liquidação.\n\nCom o parâmetro *Pagamento em menos de (dias)* em **0**, aponta apenas DIAS < 0 (pagamento anterior à liquidação); com N > 0, aponta também DIAS < N. Pagamentos cuja liquidação não está na base ficam de fora.",
 ))
 
 # 6. Liquidação antes do empenho ------------------------------------------------
@@ -118,8 +135,9 @@ t = ln.assign(DATA_EMPENHO=ln["EMPENHO"].map(data_emp))
 t = t[t["DATA_EMPENHO"].notna() & (t["DATA"] < t["DATA_EMPENHO"])]
 testes.append((
     "Liquidação anterior à data do empenho", "alta",
-    t[["DATA", "DATA_EMPENHO", "LIQUIDACAO", "EMPENHO", "FORNECEDOR_NOME", "VALOR", "TIPO_DOCUMENTO"]],
+    t[["ESTORNO", "DATA", "DATA_EMPENHO", "LIQUIDACAO", "EMPENHO", "FORNECEDOR_NOME", "VALOR", "TIPO_DOCUMENTO"]],
     "A liquidação foi registrada antes do próprio empenho (art. 60 da Lei 4.320/64).",
+    "**Regra:** a data do empenho é a **menor** `DATA` entre os lançamentos normais daquele `EMPENHO` (base completa). Aponta a liquidação cuja `DATA` é anterior a essa. Liquidações sem empenho na base ficam de fora (caem no teste 2).",
 ))
 
 # 7. Fracionamento de despesa ---------------------------------------------------
@@ -133,18 +151,43 @@ testes.append((
     f"Mesmo fornecedor e mesma natureza de despesa, no mesmo exercício, com 2+ empenhos **sem modalidade de licitação** "
     f"somando mais de {dados.brl(limite_frac)}. Exclui empenhos com Pregão, Dispensa, Inexigibilidade etc. informados. "
     "Confirmar se houve processo licitatório ou hipótese legal de dispensa/inexigibilidade.",
+    "**Base:** Empenhos do(s) exercício(s), **apenas os com `MODALIDADE` vazia** (sem licitação informada).\n\n**Regra:** agrupa por exercício + fornecedor (código e nome) + `NATUREZA` e aponta o grupo que tenha 2 ou mais empenhos distintos e soma de `VALOR` acima do limite de dispensa definido na barra lateral.",
 ))
 
 # 8. Pagamentos possivelmente duplicados ----------------------------------------
-ch = ["FORNECEDOR_COD", "DATA", "VALOR_PAGO"]
-t = pn[pn["VALOR_PAGO"] > 0]
+# O documento fiscal só existe na base de Liquidações; é trazido para o pagamento
+# pela chave LIQUIDACAO. Ficam apenas os casos iguais em documento fiscal E valor.
+doc_da_liq = liq[~liq["ESTORNO"]].drop_duplicates("LIQUIDACAO").set_index("LIQUIDACAO")[["TIPO_DOCUMENTO", "SERIE"]]
+t = pn[pn["VALOR_PAGO"] != 0].join(doc_da_liq, on="LIQUIDACAO")
+t["TIPO_DOCUMENTO"] = t["TIPO_DOCUMENTO"].fillna("")
+t["SERIE"] = t["SERIE"].fillna("")
+t = t[t["TIPO_DOCUMENTO"] != ""]
+ch = ["FORNECEDOR_COD", "TIPO_DOCUMENTO", "SERIE", "VALOR_PAGO"]
 t = t[t.duplicated(ch, keep=False)]
-t = t[t.groupby(ch)["LIQUIDACAO"].transform("nunique") > 1].sort_values(ch)
+t = t[t.groupby(ch, dropna=False)["LIQUIDACAO"].transform("nunique") > 1].sort_values(ch + ["DATA"])
 testes.append((
     "Pagamentos possivelmente duplicados", "média",
-    t[["DATA", "PAGAMENTO", "LIQUIDACAO", "EMPENHO", "FORNECEDOR_NOME", "VALOR_PAGO", "NATUREZA"]],
-    "Mesmo fornecedor, mesma data e mesmo valor pagos em liquidações diferentes. Podem ser parcelas legítimas "
-    "(ex.: folha, contratos com várias unidades) — verificar os documentos fiscais.",
+    t[["ESTORNO", "DATA", "PAGAMENTO", "LIQUIDACAO", "EMPENHO", "FORNECEDOR_NOME", "TIPO_DOCUMENTO", "SERIE", "VALOR_PAGO", "NATUREZA"]],
+    "Mesmo fornecedor, **mesmo documento fiscal e mesmo valor pago**, em liquidações diferentes — só entram os casos "
+    "iguais nos dois critérios. O documento fiscal vem da liquidação referenciada pelo pagamento, portanto pagamentos "
+    "sem liquidação na base, ou com liquidação sem documento informado, ficam de fora deste teste. "
+    "Podem ser parcelas legítimas (ex.: contratos com várias unidades) — conferir a nota no processo.",
+    "**Regra:** o documento fiscal só existe na base de Liquidações, então é trazido ao pagamento por *join* na chave `LIQUIDACAO` — uma linha por liquidação, de modo que, se a liquidação tiver documentos diferentes, vale o primeiro (≈5% das liquidações da base).\n\nDescarta pagamentos de valor zero e os que ficaram sem documento. Agrupa por fornecedor + `TIPO_DOCUMENTO` + `SERIE` + `VALOR_PAGO` e aponta o grupo com 2 ou mais `LIQUIDACAO` distintas — ou seja, **documento fiscal e valor iguais**, pagos por liquidações diferentes.",
+))
+
+# 8b. Pagamentos duplicados por data e valor (independe do documento) -----------
+ch = ["FORNECEDOR_COD", "DATA", "VALOR_PAGO"]
+t = pn[pn["VALOR_PAGO"] != 0]
+t = t[t.duplicated(ch, keep=False)]
+t = t[t.groupby(ch, dropna=False)["LIQUIDACAO"].transform("nunique") > 1].sort_values(ch)
+testes.append((
+    "Pagamentos duplicados por data e valor (sem usar documento fiscal)", "média",
+    t[["ESTORNO", "DATA", "PAGAMENTO", "LIQUIDACAO", "EMPENHO", "FORNECEDOR_NOME", "VALOR_PAGO", "NATUREZA"]],
+    "Mesmo fornecedor, mesma data e mesmo valor pagos em liquidações diferentes. É a regra anterior deste painel, "
+    "mantida em separado por **não** depender do documento fiscal: pega a duplicidade em que o documento foi digitado "
+    "diferente, ou não foi informado — casos que o teste acima não enxerga. Em compensação gera bem mais ruído "
+    "(folha, contratos com várias unidades, tarifas repetidas), então trate como pista, não como apontamento fechado.",
+    "**Regra:** agrupa os pagamentos de valor diferente de zero por fornecedor + `DATA` + `VALOR_PAGO` e aponta o grupo com 2 ou mais `LIQUIDACAO` distintas. O documento fiscal não entra na chave.\n\nÉ independente do teste anterior: cobre o caso em que o documento foi digitado de forma diferente nas duas liquidações, ou não foi informado. Por não usar o documento, aponta bem mais linhas.",
 ))
 
 # 9. Documento fiscal repetido --------------------------------------------------
@@ -154,9 +197,10 @@ t = t[t.duplicated(ch, keep=False)]
 t = t[t.groupby(ch)["LIQUIDACAO"].transform("nunique") > 1].sort_values(ch + ["DATA"])
 testes.append((
     "Mesmo documento fiscal em liquidações distintas", "média",
-    t[["DATA", "LIQUIDACAO", "EMPENHO", "FORNECEDOR_NOME", "TIPO_DOCUMENTO", "SERIE", "VALOR"]],
+    t[["ESTORNO", "DATA", "LIQUIDACAO", "EMPENHO", "FORNECEDOR_NOME", "TIPO_DOCUMENTO", "SERIE", "VALOR"]],
     "O mesmo número/série de documento do mesmo fornecedor aparece em mais de uma liquidação. Possível liquidação em duplicidade "
     "(ou nota liquidada em parcelas — verificar se a soma bate com o documento).",
+    "**Base:** Liquidações do(s) exercício(s) com `TIPO_DOCUMENTO` preenchido.\n\n**Regra:** agrupa por fornecedor + `TIPO_DOCUMENTO` + `SERIE` — **o valor não entra na chave** — e aponta o grupo com 2 ou mais `LIQUIDACAO` distintas. Por isso pega também a nota liquidada em parcelas, que o teste de pagamento duplicado descarta.",
 ))
 
 # 10. Lançamentos em fim de semana ----------------------------------------------
@@ -172,24 +216,27 @@ t = pd.concat([
 t = t.assign(DIA=t["DATA"].dt.dayofweek.map({5: "Sábado", 6: "Domingo"}))
 testes.append((
     "Lançamentos em sábado ou domingo", "baixa",
-    t[["BASE", "DATA", "DIA", "CHAVE", "EMPENHO", "FORNECEDOR_NOME", "VALOR"]].sort_values("DATA"),
+    t[["ESTORNO", "BASE", "DATA", "DIA", "CHAVE", "EMPENHO", "FORNECEDOR_NOME", "VALOR"]].sort_values("DATA"),
     "Registros em dias sem expediente. Podem ser legítimos (folha, tarifas bancárias, retroação) mas merecem atenção.",
+    "**Regra:** filtra empenhos, liquidações e pagamentos do(s) exercício(s) cuja `DATA` cai em sábado ou domingo e empilha os três numa tabela única, com a coluna BASE indicando a origem e CHAVE o número do documento.",
 ))
 
 # 11. Empenhos no último dia do exercício -------------------------------------
 t = en[(en["DATA"].dt.month == 12) & (en["DATA"].dt.day >= 30)]
 testes.append((
     "Empenhos em 30 ou 31 de dezembro", "baixa",
-    t[["DATA", "EMPENHO", "FORNECEDOR_NOME", "NATUREZA", "VALOR", "DESCRICAO"]].sort_values("VALOR", ascending=False),
+    t[["ESTORNO", "DATA", "EMPENHO", "FORNECEDOR_NOME", "NATUREZA", "VALOR", "DESCRICAO"]].sort_values("VALOR", ascending=False),
     "Empenhos de fim de exercício podem indicar 'empenho de sobra de dotação' para inscrição em restos a pagar sem despesa efetiva.",
+    "**Regra:** empenhos do(s) exercício(s) com `DATA` em dezembro, dia 30 ou 31. Ordenados do maior valor para o menor.",
 ))
 
 # 12. Empenho sem descrição -------------------------------------------------------
 t = en[en["DESCRICAO"].fillna("").str.len() < 10]
 testes.append((
     "Empenho sem descrição (ou descrição muito curta)", "baixa",
-    t[["DATA", "EMPENHO", "FORNECEDOR_NOME", "NATUREZA", "VALOR", "DESCRICAO"]],
+    t[["ESTORNO", "DATA", "EMPENHO", "FORNECEDOR_NOME", "NATUREZA", "VALOR", "DESCRICAO"]],
     "Histórico insuficiente dificulta a verificação do objeto da despesa.",
+    "**Regra:** empenhos do(s) exercício(s) cuja `DESCRICAO` tem menos de 10 caracteres, incluindo os vazios.",
 ))
 
 # 12b. Estornos superiores ao lançamento original --------------------------------
@@ -204,6 +251,7 @@ testes.append((
     "Estornos superiores ao lançamento original (saldo negativo)", "média", t,
     "A soma dos estornos de um empenho/liquidação excede o valor original. Frequentemente é o mesmo estorno "
     "exportado em duplicidade pelo SCP-550 (uma linha por documento fiscal), mas pode ser estorno indevido — conferir no sistema.",
+    "**Regra:** soma o `VALOR` por `EMPENHO` e por `LIQUIDACAO` nas bases completas (estornos negativos) e aponta as chaves do(s) exercício(s) cujo saldo ficou **abaixo de −tolerância** — isto é, os estornos superam o lançamento original. As duas bases são empilhadas com a coluna BASE.",
 ))
 
 # 13. Empenhos sem qualquer liquidação (saldo integral) -------------------------
@@ -214,6 +262,7 @@ testes.append((
     "Empenhos sem nenhuma liquidação", "info",
     t.sort_values("EMPENHADO", ascending=False),
     "Saldo empenhado integralmente sem liquidação. Normal no exercício corrente; em exercícios encerrados indica restos a pagar não processados.",
+    "**Regra:** para cada `EMPENHO` do(s) exercício(s), compara o saldo empenhado (líquido de anulações) com a soma das liquidações da mesma chave na base completa. Aponta quando o saldo é maior que a tolerância e o liquidado é exatamente zero.",
 ))
 
 # 14. Concentração de fornecedores ----------------------------------------------
@@ -224,27 +273,38 @@ t = t.sort_values("VALOR_PAGO", ascending=False).head(30)
 testes.append((
     "Concentração de pagamentos por fornecedor (top 30)", "info", t,
     "Informativo: fornecedores que concentram a maior parte dos pagamentos do período.",
+    "**Regra:** agrupa os pagamentos do(s) exercício(s) por fornecedor, soma `VALOR_PAGO`, conta os `PAGAMENTO` distintos e calcula o percentual sobre o total pago do período. Mostra os 30 maiores. Não é um teste de irregularidade.",
 ))
 
 # ---------------------------------------------------------------- resumo
 COR = {"alta": "🔴", "média": "🟠", "baixa": "🟡", "info": "🔵"}
 resumo = pd.DataFrame(
-    [{"Gravidade": f"{COR[g]} {g}", "Teste": titulo, "Apontamentos": len(t)} for titulo, g, t, _ in testes]
+    [{"Gravidade": f"{COR[g]} {g}", "Teste": titulo, "Apontamentos": len(t)} for titulo, g, t, _, _m in testes]
 )
 st.subheader("Resumo")
 c1, c2, c3, c4 = st.columns(4)
 for col, g in zip([c1, c2, c3, c4], ["alta", "média", "baixa", "info"]):
-    n = sum(len(t) for _, gg, t, _ in testes if gg == g)
+    n = sum(len(t) for _, gg, t, _, _m in testes if gg == g)
     col.metric(f"{COR[g]} Gravidade {g}", f"{n:,}".replace(",", "."))
 st.dataframe(resumo, hide_index=True, width="stretch")
 
 # ---------------------------------------------------------------- detalhes
+# st.expander só aceita `help` a partir do Streamlit 1.45; em versões anteriores
+# o método de cada teste é exibido num popover dentro do próprio expander.
+EXPANDER_TEM_HELP = "help" in inspect.signature(st.expander).parameters
+
 st.subheader("Detalhamento")
 so_com_apontamento = st.toggle("Mostrar apenas testes com apontamentos", value=True, help="Desligue para listar também os testes que não encontraram nada nos exercícios selecionados.")
-for i, (titulo, g, t, explicacao) in enumerate(testes):
+for i, (titulo, g, t, explicacao, metodo) in enumerate(testes):
     if so_com_apontamento and t.empty:
         continue
-    with st.expander(f"{COR[g]} {titulo} — {len(t):,} apontamento(s)".replace(",", "."), expanded=False):
+    rotulo = f"{COR[g]} {titulo} — {len(t):,} apontamento(s)".replace(",", ".")
+    ajuda = {"help": dados.md(f"**Como este teste é feito**\n\n{metodo}")} if EXPANDER_TEM_HELP else {}
+    with st.expander(rotulo, expanded=False, **ajuda):
+        if not EXPANDER_TEM_HELP:
+            # Streamlit antigo: sem tooltip no expander, o método vai num popover.
+            with st.popover("❓ Como este teste é feito"):
+                dados.texto(metodo)
         dados.texto(explicacao)
         if t.empty:
             st.success("Nenhum apontamento para os exercícios selecionados.")

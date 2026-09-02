@@ -380,6 +380,13 @@ COLUNAS_TOTALIZAVEIS = [
 def tabela(df: pd.DataFrame, **kwargs) -> None:
     """Exibe um DataFrame e, logo abaixo, a linha de totais das colunas de valor."""
     kwargs.setdefault("width", "stretch")
+    if "ESTORNO" in df.columns:
+        cfg = dict(kwargs.get("column_config") or {})
+        cfg.setdefault("ESTORNO", st.column_config.CheckboxColumn(
+            "Estorno", disabled=True,
+            help="Marcado quando a linha é um estorno/anulação (valor negativo no SCP-550).",
+        ))
+        kwargs["column_config"] = cfg
     st.dataframe(df, **kwargs)
 
     cols = [c for c in COLUNAS_TOTALIZAVEIS if c in df.columns and pd.api.types.is_numeric_dtype(df[c])]

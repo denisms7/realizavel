@@ -18,7 +18,8 @@ pages = {
     ],
 
     "➡️ Bancos": [
-        st.Page("pages/04_extrato.py", title="Extrato"),
+        st.Page("pages/04_extrato_apmif.py", title="Extrato APMIF"),
+        st.Page("pages/04_extrato_182001.py", title="Extrato 18.200-1"),
     ],
 
     "🚩 Auditoria": [
