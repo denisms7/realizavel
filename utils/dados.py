@@ -135,6 +135,22 @@ def _tratar(df: pd.DataFrame, base: str) -> pd.DataFrame:
     df["ESTORNO"] = df[col_valor].fillna(0) < 0
     df["LANCAMENTO"] = df["ESTORNO"].map({True: "Estorno", False: "Normal"}).astype("string")
 
+    # Em Empenhos e Liquidações, nas linhas de estorno a coluna-chave (EMPENHO /
+    # LIQUIDACAO) traz o número do PRÓPRIO estorno; o lançamento original está em
+    # NUMERO.../EXERCICIO... . Regravamos a chave para apontar ao original e
+    # guardamos o número do estorno em <CHAVE>_ESTORNO. (Em Pagamentos a chave já
+    # aponta ao pagamento original.)
+    if base in ("empenhos", "liquidacoes"):
+        chave = COLUNAS_CHAVE[base][0]
+        num, exe = COLUNAS_INTEIRO[base][1], COLUNAS_INTEIRO[base][0]
+        original = df[num].astype("string") + "/" + df[exe].astype("string")
+        ok = df["ESTORNO"] & df[num].notna() & df[exe].notna()
+        df[f"{chave}_ESTORNO"] = df[chave].where(df["ESTORNO"], pd.NA)
+        df[chave] = df[chave].mask(ok, original)
+        # ANO/MES recalculados com a chave corrigida
+        ano = df[chave].str.extract(r"/(\d{4})$")[0]
+        df["ANO"] = pd.to_numeric(ano, errors="coerce").astype("Int64")
+
     if base == "pagamentos":
         # LIQUIDO vem com formatação inconsistente; recalculado.
         df["LIQUIDO"] = df["VALOR_PAGO"].fillna(0) - df["RETENCOES"].fillna(0)
@@ -212,6 +228,16 @@ def brl(valor: float | None) -> str:
     return f"R$ {s}"
 
 
+def md(texto: str) -> str:
+    """Escapa `$` para o Markdown do Streamlit não interpretar "R$ ... R$" como fórmula LaTeX."""
+    return texto.replace("$", "\\$")
+
+
+def texto(conteudo: str) -> None:
+    """st.markdown seguro para textos com valores em R$."""
+    st.markdown(md(conteudo))
+
+
 def resumo_qualidade(df: pd.DataFrame) -> pd.DataFrame:
     """Nulos, tipo e exemplos por coluna – para a página de fonte de dados."""
     linhas = []
@@ -283,7 +309,7 @@ def tabela(df: pd.DataFrame, **kwargs) -> None:
     cols = [c for c in COLUNAS_TOTALIZAVEIS if c in df.columns and pd.api.types.is_numeric_dtype(df[c])]
     partes = [f"**Total** — {len(df):,} registro(s)".replace(",", ".")]
     partes += [f"**{c}:** {brl(df[c].sum())}" for c in cols]
-    st.markdown(" &nbsp;·&nbsp; ".join(partes))
+    texto(" &nbsp;·&nbsp; ".join(partes))
 
 
 def kpis_valor(df: pd.DataFrame, col: str, rotulo: str) -> None:

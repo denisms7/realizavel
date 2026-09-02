@@ -48,7 +48,7 @@ with a2:
     resumo["PAGO"] = pago_por_liq.reindex(resumo.index).fillna(0)
     resumo["A_PAGAR"] = resumo["LIQUIDADO"] - resumo["PAGO"]
     pend = resumo[resumo["A_PAGAR"] > 0.005].sort_values("A_PAGAR", ascending=False)
-    st.write(f"{len(pend)} liquidação(ões) com saldo a pagar — total {dados.brl(pend['A_PAGAR'].sum())}.")
+    dados.texto(f"{len(pend)} liquidação(ões) com saldo a pagar — total {dados.brl(pend['A_PAGAR'].sum())}.")
     dados.tabela(pend)
 with a3:
     chave = ["FORNECEDOR_COD", "TIPO_DOCUMENTO", "SERIE"]
@@ -59,7 +59,7 @@ with a3:
 
 with a4:
     est = df[df["ESTORNO"]].sort_values("VALOR")
-    st.write(f"{len(est)} estorno(s) de liquidação — total {dados.brl(-est['VALOR'].sum())}.")
+    dados.texto(f"{len(est)} estorno(s) de liquidação — total {dados.brl(-est['VALOR'].sum())}.")
     dados.tabela(est, hide_index=True)
 
 # ---------------------------------------------------------------- tabela

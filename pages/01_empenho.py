@@ -45,11 +45,11 @@ with a1:
     dados.tabela(acima)
 with a2:
     sem = saldo[(saldo["LIQUIDADO"] == 0) & (saldo["EMPENHADO"] > 0)].sort_values("EMPENHADO", ascending=False)
-    st.write(f"{len(sem)} empenho(s) sem nenhuma liquidação — total {dados.brl(sem['EMPENHADO'].sum())}.")
+    dados.texto(f"{len(sem)} empenho(s) sem nenhuma liquidação — total {dados.brl(sem['EMPENHADO'].sum())}.")
     dados.tabela(sem)
 with a3:
     est = df[df["ESTORNO"]].sort_values("VALOR")
-    st.write(f"{len(est)} estorno(s)/anulação(ões) de empenho — total {dados.brl(-est['VALOR'].sum())}.")
+    dados.texto(f"{len(est)} estorno(s)/anulação(ões) de empenho — total {dados.brl(-est['VALOR'].sum())}.")
     dados.tabela(est, hide_index=True)
 
 # ---------------------------------------------------------------- tabela

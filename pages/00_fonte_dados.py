@@ -40,7 +40,7 @@ for col, (base, df) in zip(cols, bases.items()):
     vcol = dados.COLUNAS_VALOR[base][0]
     with col:
         st.metric(base.capitalize(), f"{len(df):,}".replace(",", "."), help="Quantidade de linhas")
-        st.write(f"**Total {vcol}:** {dados.brl(df[vcol].sum())}")
+        dados.texto(f"**Total {vcol}:** {dados.brl(df[vcol].sum())}")
         dmin, dmax = df["DATA"].min(), df["DATA"].max()
         st.write(f"**Período:** {dmin:%d/%m/%Y} a {dmax:%d/%m/%Y}")
         st.write(f"**Exercícios:** {int(df['ANO'].min())} – {int(df['ANO'].max())}")
@@ -76,6 +76,8 @@ with aba_tipos:
 - **Datas** (`{", ".join(dados.COLUNAS_DATA[escolha])}`): formato `dd.mm.aaaa`.
 - **Valores** (`{", ".join(dados.COLUNAS_VALOR[escolha])}`): ponto decimal; valores entre parênteses são negativos.
 - **Valor negativo = estorno** do lançamento original (anulação de empenho, estorno de liquidação/pagamento); gera as colunas `ESTORNO` e `LANCAMENTO`.
+- **Chave dos estornos:** em Empenhos e Liquidações, na linha de estorno a coluna `EMPENHO`/`LIQUIDACAO` traz o número do próprio estorno;
+  o lançamento original está em `NUMERO.../EXERCICIO...`. A chave é regravada para apontar ao original e o número do estorno fica em `EMPENHO_ESTORNO`/`LIQUIDACAO_ESTORNO`.
 - **Inteiros com ponto de milhar** (`{", ".join(dados.COLUNAS_INTEIRO[escolha])}`): `2.013` → `2013`.
 - **Linhas com `;` dentro de um campo:** os pedaços excedentes são reagrupados na coluna `{dados.COLUNA_ABSORVE[escolha]}`.
 - **Colunas derivadas:** `ANO` (extraído da chave `{dados.COLUNAS_CHAVE[escolha][0]}` = número/ano), `MES`,

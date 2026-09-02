@@ -21,6 +21,11 @@ pages = {
         st.Page("pages/00_fonte_dados.py", title="Fonte de Dados"),
     ],
 
+    "🚩 Auditoria": [
+        st.Page("pages/05_irregularidades.py", title="Possíveis irregularidades"),
+    ],
+
+
 }
 
 pg = st.navigation(pages)
