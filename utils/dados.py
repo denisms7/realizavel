@@ -19,7 +19,8 @@ import pandas as pd
 import streamlit as st
 
 RAIZ = Path(__file__).resolve().parent.parent
-PASTA_DADOS = RAIZ / "scp550"
+PASTA_DADOS = RAIZ / "data" / "scp550"
+PASTA_EXTRATOS = RAIZ / "data" / "extratos"
 
 ARQUIVOS = {
     "empenhos": "Empenhos2013a2026.csv",
