@@ -135,6 +135,13 @@ def _para_inteiro(serie: pd.Series) -> pd.Series:
     return pd.to_numeric(s, errors="coerce").astype("Int64")
 
 
+def _para_float_br(serie: pd.Series) -> pd.Series:
+    """'1.234,56' -> 1234.56 (formato dos extratos bancários)."""
+    s = serie.astype("string").str.strip()
+    s = s.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+    return pd.to_numeric(s, errors="coerce").astype("float64")
+
+
 def _para_data(serie: pd.Series) -> pd.Series:
     return pd.to_datetime(serie, format="%d.%m.%Y", errors="coerce")
 
@@ -253,6 +260,134 @@ def exigir_base(base: str) -> pd.DataFrame:
     except FileNotFoundError as e:
         st.error(f"{e}\n\nVá em **Sistema → Fonte de Dados** para verificar os arquivos.")
         st.stop()
+
+
+# --------------------------------------------------------------------------- #
+# Extratos bancários (data/extratos/*.csv)
+# --------------------------------------------------------------------------- #
+# Lançamentos que apenas movimentam a aplicação financeira da própria conta:
+# não são despesa e portanto não têm empenho/liquidação/pagamento.
+HISTORICO_INTERNO = r"APLIC|RESGATE|BB CP|APL\.AUT"
+
+
+def extratos_disponiveis() -> list[str]:
+    if not PASTA_EXTRATOS.is_dir():
+        return []
+    return sorted(p.name for p in PASTA_EXTRATOS.glob("*.csv"))
+
+
+@st.cache_data(show_spinner="Lendo extrato bancário...")
+def carregar_extrato(nome: str, mtime: float | None = None) -> pd.DataFrame:
+    """Lê um extrato de `data/extratos/`. `mtime` só invalida o cache."""
+    p = PASTA_EXTRATOS / nome
+    if not p.exists():
+        raise FileNotFoundError(f"Arquivo não encontrado: {p}")
+    df = pd.read_csv(p, sep=";", encoding="utf-8-sig", dtype="string")
+    df.columns = [c.strip() for c in df.columns]
+
+    df["DATA"] = _para_data(df["Data_Contabil"])
+    df["VALOR"] = _para_float_br(df["Valor"])
+    df["TIPO"] = df["Tipo"].str.strip().str.upper()
+    # "Saldo anterior" e linhas sem valor não são lançamentos.
+    df = df[df["TIPO"].isin(["C", "D"]) & df["VALOR"].notna() & df["DATA"].notna()].copy()
+
+    df["MOVIMENTO"] = df["TIPO"].map({"C": "Crédito", "D": "Débito"}).astype("string")
+    df["VALOR_SINAL"] = df["VALOR"].where(df["TIPO"] == "C", -df["VALOR"])
+    df["INTERNO"] = df["Historico"].str.contains(HISTORICO_INTERNO, case=False, na=False, regex=True)
+    df["CHEQUE"] = df["Eh_Cheque"].str.strip().str.casefold().eq("sim")
+    df["ANO"] = df["DATA"].dt.year.astype("Int64")
+    df["MES"] = df["DATA"].dt.to_period("M").astype("string")
+    for c in ("Historico", "Detalhe", "Documento"):
+        if c in df:
+            df[c] = df[c].fillna("")
+    return df.reset_index(drop=True)
+
+
+def exigir_extrato(nome: str) -> pd.DataFrame:
+    p = PASTA_EXTRATOS / nome
+    try:
+        return carregar_extrato(nome, p.stat().st_mtime if p.exists() else None)
+    except FileNotFoundError as e:
+        st.error(f"{e}\n\nColoque o arquivo em `data/extratos/` e recarregue a página.")
+        st.stop()
+
+
+def bytes_extrato(nome: str) -> bytes:
+    """Conteúdo bruto de um arquivo de `data/extratos/` (CSV ou PDF), para download."""
+    return (PASTA_EXTRATOS / nome).read_bytes()
+
+
+def conciliar_com_pagamentos(
+    extrato: pd.DataFrame, pagamentos: pd.DataFrame, janela: int = 5, decimais: int = 2
+) -> pd.DataFrame:
+    """Para cada lançamento do extrato, procura pagamentos do SCP-550 de **mesmo valor**.
+
+    Não existe chave comum entre o extrato e o SCP-550 (o extrato não traz empenho,
+    liquidação nem conta de dotação), então o cruzamento é por valor + proximidade de
+    data. Devolve uma linha por lançamento do extrato com o candidato mais próximo.
+    """
+    import numpy as np
+
+    pn = pagamentos[~pagamentos["ESTORNO"]]
+    alvo = extrato["VALOR"].round(decimais).to_numpy()
+    datas = extrato["DATA"].to_numpy()
+
+    # Índice valor -> posições em `pn`, considerando bruto e líquido de retenções.
+    posicoes: dict[float, list[int]] = {}
+    for col in ("VALOR_PAGO", "LIQUIDO"):
+        for v, pos in pd.Series(range(len(pn))).groupby(pn[col].round(decimais).to_numpy()):
+            posicoes.setdefault(float(v), []).extend(pos.tolist())
+
+    pn_datas = pn["DATA"].to_numpy()
+    melhor, n_cand, n_janela = [], [], []
+    for v, d in zip(alvo, datas):
+        pos = posicoes.get(float(v))
+        if not pos:
+            melhor.append(-1); n_cand.append(0); n_janela.append(0)
+            continue
+        pos = np.array(sorted(set(pos)))
+        dias = np.abs((pn_datas[pos] - d).astype("timedelta64[D]").astype(int))
+        melhor.append(int(pos[dias.argmin()]))
+        n_cand.append(len(pos))
+        n_janela.append(int((dias <= janela).sum()))
+
+    out = extrato.copy()
+    out["CANDIDATOS"] = n_cand
+    out["CANDIDATOS_NA_JANELA"] = n_janela
+
+    achou = np.array(melhor) >= 0
+    cols = ["DATA", "PAGAMENTO", "LIQUIDACAO", "EMPENHO", "FORNECEDOR_NOME", "VALOR_PAGO", "RETENCOES", "LIQUIDO"]
+    vazio = pd.DataFrame(index=out.index, columns=[f"PAG_{c}" for c in cols], dtype="object")
+    if achou.any():
+        m = pn.iloc[[i for i in melhor if i >= 0]][cols].reset_index(drop=True)
+        m.index = out.index[achou]
+        vazio.loc[achou, :] = m.rename(columns={c: f"PAG_{c}" for c in cols}).values
+    out = pd.concat([out, vazio], axis=1)
+    out["PAG_DATA"] = pd.to_datetime(out["PAG_DATA"], errors="coerce")
+    out["DIAS"] = (out["DATA"] - out["PAG_DATA"]).dt.days
+
+    def classificar(r) -> str:
+        if r["CANDIDATOS"] == 0:
+            return "Sem pagamento desse valor"
+        if pd.isna(r["DIAS"]):
+            return "Sem pagamento desse valor"
+        if r["DIAS"] == 0:
+            return "Conciliado — mesmo dia"
+        if abs(r["DIAS"]) <= janela:
+            return f"Conciliado — até {janela} dia(s)"
+        return "Valor existe, data distante"
+
+    out["STATUS"] = out.apply(classificar, axis=1).astype("string")
+
+    # Um valor redondo (R$ 500,00) casa com centenas de pagamentos: a conciliação
+    # só identifica o lançamento quando há UM candidato na janela.
+    def confianca(r) -> str:
+        if not str(r["STATUS"]).startswith("Conciliado"):
+            return "—"
+        return "Única" if r["CANDIDATOS_NA_JANELA"] <= 1 else f"Ambígua ({r['CANDIDATOS_NA_JANELA']})"
+
+    out["CONFIANCA"] = out.apply(confianca, axis=1).astype("string")
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -417,6 +552,9 @@ def _df_para_csv(df: pd.DataFrame) -> bytes:
         if pd.api.types.is_datetime64_any_dtype(out[c]):
             out[c] = out[c].dt.strftime("%d/%m/%Y")
     return out.to_csv(index=False, sep=";", decimal=",", float_format="%.2f").encode("utf-8-sig")
+
+
+df_para_csv = _df_para_csv  # nome público, usado pelas páginas
 
 
 @st.cache_data(show_spinner="Gerando CSV tratado...")
