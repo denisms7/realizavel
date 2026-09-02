@@ -7,6 +7,10 @@ st.set_page_config(
 )
 
 pages = {
+    "⚙️ Sistema": [
+        st.Page("pages/00_fonte_dados.py", title="Fonte de Dados"),
+    ],
+
     "➡️ SCP-550": [
         st.Page("pages/01_empenho.py", title="Empenho"),
         st.Page("pages/02_liquidacao.py", title="Liquidação"),
@@ -17,14 +21,9 @@ pages = {
         st.Page("pages/04_extrato.py", title="Extrato"),
     ],
 
-    "⚙️ Sistema": [
-        st.Page("pages/00_fonte_dados.py", title="Fonte de Dados"),
-    ],
-
     "🚩 Auditoria": [
-        st.Page("pages/05_irregularidades.py", title="Possíveis irregularidades"),
+        st.Page("pages/05_irregularidades.py", title="Possíveis irregularidades SCP-550"),
     ],
-
 
 }
 
