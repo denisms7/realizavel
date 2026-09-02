@@ -36,7 +36,7 @@ liq_por_liq = liq.groupby("LIQUIDACAO")["VALOR"].sum()
 
 a1, a2, a3 = st.tabs(["Pago acima do liquidado", "Sem liquidação correspondente", "Estornos"])
 with a1:
-    pago = efetivos.groupby("LIQUIDACAO").agg(
+    pago = df.groupby("LIQUIDACAO").agg(  # soma líquida de estornos
         DATA=("DATA", "min"), EMPENHO=("EMPENHO", "first"),
         FORNECEDOR_NOME=("FORNECEDOR_NOME", "first"), PAGO=("VALOR_PAGO", "sum"),
     )

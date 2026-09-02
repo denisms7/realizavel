@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import csv
 import io
+import re
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -25,11 +27,22 @@ ARQUIVOS = {
     "pagamentos": "Pagamentos2013a2026.csv",
 }
 
-# Coluna que "absorve" os ';' excedentes quando a linha tem campos a mais.
-COLUNA_ABSORVE = {
-    "empenhos": "DESCRICAO",
-    "liquidacoes": "DESCRICAO",
-    "pagamentos": "FORNECEDORES",
+# Colunas que podem conter ';' sem aspas (deslocando as colunas seguintes),
+# em ordem de probabilidade. O leitor testa cada hipótese e fica com a primeira
+# em que as colunas numéricas/datas voltam a fazer sentido.
+COLUNAS_ABSORVEM = {
+    "empenhos": ["DESCRICAO", "FORNECEDORES", "MODALIDADE"],
+    "liquidacoes": ["DESCRICAO", "FORNECEDORES", "TIPO_DOCUMENTO", "SERVIDOR_AUTORIZACAO"],
+    "pagamentos": ["FORNECEDORES"],
+}
+
+# Padrões usados para validar uma linha reconstruída.
+_RE_DATA = r"^(\d{2}\.\d{2}\.\d{4})?$"
+_RE_NUM = r"^(\(?-?[\d.]+\)?)?$"
+VALIDACAO_LINHA = {
+    "empenhos": {"DATA": _RE_DATA, "VALOR": _RE_NUM, "EXERCICIO": _RE_NUM, "NUMEROEMPENHO": _RE_NUM},
+    "liquidacoes": {"DATA": _RE_DATA, "DATA1": _RE_DATA, "VALOR": _RE_NUM, "EXERCICIOLIQUIDACAO": _RE_NUM, "NUMEROLIQUIDACAO": _RE_NUM},
+    "pagamentos": {"DATA": _RE_DATA, "VALOR_PAGO": _RE_NUM, "RETENCOES": _RE_NUM, "EXERCICIO": _RE_NUM, "NRPAGAMENTO": _RE_NUM},
 }
 
 COLUNAS_DATA = {
@@ -62,12 +75,29 @@ COLUNAS_CHAVE = {
 # --------------------------------------------------------------------------- #
 # Leitura bruta
 # --------------------------------------------------------------------------- #
-def _ler_csv_tolerante(conteudo: str, coluna_absorve: str) -> pd.DataFrame:
+def _ler_csv_tolerante(conteudo: str, base: str) -> pd.DataFrame:
     """Lê o CSV linha a linha, corrigindo linhas com ';' dentro de um campo."""
     leitor = csv.reader(io.StringIO(conteudo), delimiter=";")
     cabecalho = next(leitor)
     n = len(cabecalho)
-    idx = cabecalho.index(coluna_absorve)
+    candidatos = [cabecalho.index(c) for c in COLUNAS_ABSORVEM[base] if c in cabecalho]
+    validadores = [(cabecalho.index(c), re.compile(rx)) for c, rx in VALIDACAO_LINHA[base].items() if c in cabecalho]
+
+    def pontua(linha: list[str]) -> int:
+        """-1 se alguma coluna validada tem conteúdo inválido; senão, quantas
+        colunas validadas estão preenchidas (quanto mais, melhor a hipótese)."""
+        pontos = 0
+        for i, rx in validadores:
+            v = linha[i].strip()
+            if not rx.match(v):
+                return -1
+            if v:
+                pontos += 1
+        return pontos
+
+    def absorve(linha: list[str], idx: int, k: int) -> list[str]:
+        junto = ";".join(linha[idx : idx + k + 1]).strip("; ")
+        return linha[:idx] + [junto] + linha[idx + k + 1 :]
 
     linhas = []
     for linha in leitor:
@@ -75,8 +105,14 @@ def _ler_csv_tolerante(conteudo: str, coluna_absorve: str) -> pd.DataFrame:
             continue
         extra = len(linha) - n
         if extra > 0:
-            junto = ";".join(linha[idx : idx + extra + 1]).strip(";")
-            linha = linha[:idx] + [junto] + linha[idx + extra + 1 :]
+            hipoteses = [absorve(linha, idx, extra) for idx in candidatos]
+            # ';' extras repartidos entre duas colunas candidatas
+            for a_, i1 in enumerate(candidatos):
+                for i2 in candidatos[a_ + 1 :]:
+                    for k in range(1, extra):
+                        hipoteses.append(absorve(absorve(linha, i2, extra - k), i1, k))
+            melhor = max(hipoteses, key=pontua)
+            linha = melhor if pontua(melhor) >= 0 else hipoteses[0]
         elif extra < 0:
             linha = linha + [""] * (-extra)
         linhas.append(linha)
@@ -177,21 +213,21 @@ def info_arquivos() -> pd.DataFrame:
                 "Arquivo": nome,
                 "Encontrado": "✅" if existe else "❌",
                 "Tamanho (MB)": round(p.stat().st_size / 1_048_576, 1) if existe else None,
-                "Modificado em": pd.Timestamp(p.stat().st_mtime, unit="s").strftime("%d/%m/%Y %H:%M") if existe else None,
+                "Modificado em": datetime.fromtimestamp(p.stat().st_mtime).strftime("%d/%m/%Y %H:%M") if existe else None,
             }
         )
     return pd.DataFrame(linhas)
 
 
 @st.cache_data(show_spinner="Lendo CSVs do SCP-550...")
-def carregar_base(base: str, _mtime: float | None = None) -> pd.DataFrame:
-    """Carrega e trata uma base. `_mtime` só serve para invalidar o cache
-    quando o arquivo muda em disco."""
+def carregar_base(base: str, mtime: float | None = None) -> pd.DataFrame:
+    """Carrega e trata uma base. `mtime` entra na chave do cache só para
+    invalidá-lo quando o arquivo muda em disco."""
     p = caminho(base)
     if not p.exists():
         raise FileNotFoundError(f"Arquivo não encontrado: {p}")
     conteudo = p.read_text(encoding="latin-1")
-    bruto = _ler_csv_tolerante(conteudo, COLUNA_ABSORVE[base])
+    bruto = _ler_csv_tolerante(conteudo, base)
     return _tratar(bruto, base)
 
 
@@ -258,12 +294,50 @@ def resumo_qualidade(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(linhas)
 
 
+AJUDA_FILTROS = {
+    "tipo": (
+        "Separa os lançamentos pelo sinal do valor.\n\n"
+        "- **Todos**: normais e estornos juntos (os totais ficam líquidos, pois o estorno é negativo).\n"
+        "- **Somente normais**: apenas valores positivos — o que foi efetivamente empenhado/liquidado/pago.\n"
+        "- **Somente estornos**: apenas valores negativos — anulações e estornos.\n\n"
+        "É aplicado antes dos demais filtros, por isso as opções deles mudam conforme a escolha."
+    ),
+    "ano": (
+        "Exercício de referência, extraído do número do documento (ex.: `123/2024` → 2024). "
+        "Nos estornos, é o exercício do lançamento **original** estornado, não a data do estorno.\n\n"
+        "Aceita vários anos. Por padrão vem o mais recente; deixe vazio para ver todos."
+    ),
+    "UNIDADE": (
+        "Unidade orçamentária (órgão/secretaria) no formato `órgão.unidade`, ex.: `06.003`. "
+        "Selecione uma ou mais; vazio = todas. Linhas de restos a pagar podem vir sem unidade e ficam de fora quando há seleção."
+    ),
+    "FONTE": (
+        "Fonte de recursos (código de 5 dígitos, ex.: `00000` = recursos livres, `00303` = saúde). "
+        "Selecione uma ou mais; vazio = todas."
+    ),
+    "NATUREZA": (
+        "Natureza da despesa (categoria.grupo.modalidade.elemento…), ex.: `3.390.390.000` = outros serviços de terceiros – PJ. "
+        "Selecione uma ou mais; vazio = todas."
+    ),
+    "forn": (
+        "Busca por trecho do **nome** do fornecedor, sem diferenciar maiúsculas/minúsculas "
+        "(ex.: `sanepar` encontra `SANEPAR-COMPANHIA DE SANEAM.DO PARANA`). "
+        "Vazio = não filtra. Para acentos, digite exatamente como está na base."
+    ),
+    "desc": (
+        "Busca por trecho do histórico/descrição do lançamento, sem diferenciar maiúsculas/minúsculas. "
+        "Na base original os acentos vieram como `.` (ex.: `AQUISI..O`), então prefira palavras sem acento."
+    ),
+}
+
+
 def filtro_padrao(df: pd.DataFrame, chave: str) -> pd.DataFrame:
     """Barra lateral com filtros comuns (ano, unidade, natureza, fonte, fornecedor, texto)."""
-    st.sidebar.header("Filtros")
+    st.sidebar.header("Filtros", help="Os filtros são cumulativos (E lógico) e valem para os indicadores, gráficos, tabelas e para o CSV exportado da página.")
 
     tipo = st.sidebar.radio(
-        "Lançamentos", ["Todos", "Somente normais", "Somente estornos"], key=f"{chave}_tipo", horizontal=True
+        "Lançamentos", ["Todos", "Somente normais", "Somente estornos"],
+        key=f"{chave}_tipo", horizontal=True, help=AJUDA_FILTROS["tipo"],
     )
     if tipo == "Somente normais":
         df = df[~df["ESTORNO"]]
@@ -271,26 +345,28 @@ def filtro_padrao(df: pd.DataFrame, chave: str) -> pd.DataFrame:
         df = df[df["ESTORNO"]]
 
     anos = sorted(df["ANO"].dropna().unique().tolist())
-    sel_anos = st.sidebar.multiselect("Exercício", anos, default=anos[-1:] if anos else [], key=f"{chave}_ano")
+    sel_anos = st.sidebar.multiselect(
+        "Exercício", anos, default=anos[-1:] if anos else [], key=f"{chave}_ano", help=AJUDA_FILTROS["ano"],
+    )
     if sel_anos:
         df = df[df["ANO"].isin(sel_anos)]
 
     for col, rotulo in [("UNIDADE", "Unidade"), ("FONTE", "Fonte"), ("NATUREZA", "Natureza")]:
         if col in df:
             opcoes = sorted(df[col].dropna().unique().tolist())
-            sel = st.sidebar.multiselect(rotulo, opcoes, key=f"{chave}_{col}")
+            sel = st.sidebar.multiselect(rotulo, opcoes, key=f"{chave}_{col}", help=AJUDA_FILTROS[col])
             if sel:
                 df = df[df[col].isin(sel)]
 
     if "FORNECEDOR_NOME" in df:
-        forn = st.sidebar.text_input("Fornecedor contém", key=f"{chave}_forn")
+        forn = st.sidebar.text_input("Fornecedor contém", key=f"{chave}_forn", help=AJUDA_FILTROS["forn"])
         if forn:
-            df = df[df["FORNECEDOR_NOME"].str.contains(forn, case=False, na=False)]
+            df = df[df["FORNECEDOR_NOME"].str.contains(forn, case=False, na=False, regex=False)]
 
     if "DESCRICAO" in df:
-        txt = st.sidebar.text_input("Descrição contém", key=f"{chave}_desc")
+        txt = st.sidebar.text_input("Descrição contém", key=f"{chave}_desc", help=AJUDA_FILTROS["desc"])
         if txt:
-            df = df[df["DESCRICAO"].str.contains(txt, case=False, na=False)]
+            df = df[df["DESCRICAO"].str.contains(txt, case=False, na=False, regex=False)]
 
     return df
 
@@ -321,3 +397,43 @@ def kpis_valor(df: pd.DataFrame, col: str, rotulo: str) -> None:
     c2.metric(f"{rotulo} (bruto)", brl(normais))
     c3.metric("Estornos", brl(estornos))
     c4.metric(f"{rotulo} líquido", brl(normais - estornos))
+
+
+# --------------------------------------------------------------------------- #
+# Exportação dos dados tratados
+# --------------------------------------------------------------------------- #
+def _df_para_csv(df: pd.DataFrame) -> bytes:
+    """CSV amigável ao Excel brasileiro: UTF-8 com BOM, ';' e decimal ','."""
+    out = df.copy()
+    for c in out.columns:
+        if pd.api.types.is_datetime64_any_dtype(out[c]):
+            out[c] = out[c].dt.strftime("%d/%m/%Y")
+    return out.to_csv(index=False, sep=";", decimal=",", float_format="%.2f").encode("utf-8-sig")
+
+
+@st.cache_data(show_spinner="Gerando CSV tratado...")
+def exportar_csv(base: str, mtime: float | None = None) -> bytes:
+    """CSV da base já tratada (tipos convertidos, chaves de estorno corrigidas,
+    colunas derivadas). `mtime` só invalida o cache quando o arquivo muda."""
+    return _df_para_csv(carregar_base(base, mtime))
+
+
+@st.cache_data(show_spinner="Gerando pacote ZIP...")
+def exportar_zip(mtimes: tuple[float | None, ...]) -> bytes:
+    """ZIP com os CSVs tratados das três bases."""
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for base, mtime in zip(ARQUIVOS, mtimes):
+            z.writestr(nome_exportacao(base), exportar_csv(base, mtime))
+    return buf.getvalue()
+
+
+def nome_exportacao(base: str) -> str:
+    return ARQUIVOS[base].replace(".csv", "_tratado.csv")
+
+
+def mtime_de(base: str) -> float | None:
+    p = caminho(base)
+    return p.stat().st_mtime if p.exists() else None

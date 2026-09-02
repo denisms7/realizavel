@@ -15,16 +15,30 @@ liq = dados.exigir_base("liquidacoes")
 pag = dados.exigir_base("pagamentos")
 
 # ---------------------------------------------------------------- parâmetros
-st.sidebar.header("Parâmetros")
+st.sidebar.header("Parâmetros", help="Os parâmetros valem para todos os testes desta página. Os cruzamentos entre bases usam sempre as bases completas (todos os anos), para não perder empenhos/liquidações de exercícios anteriores.")
 anos = sorted(set(emp["ANO"].dropna()) | set(liq["ANO"].dropna()) | set(pag["ANO"].dropna()))
-sel_anos = st.sidebar.multiselect("Exercício(s) analisado(s)", anos, default=anos[-1:], key="irr_anos")
+sel_anos = st.sidebar.multiselect(
+    "Exercício(s) analisado(s)", anos, default=anos[-1:], key="irr_anos",
+    help="Restringe os lançamentos **analisados** (empenhos, liquidações e pagamentos com esse exercício na chave). "
+         "As contrapartes usadas nos cruzamentos vêm de todos os anos — ex.: um pagamento de 2026 é comparado à sua liquidação mesmo que ela seja de 2025.",
+)
 limite_frac = st.sidebar.number_input(
     "Limite de dispensa para fracionamento (R$)", min_value=1000.0, value=59906.02, step=1000.0,
-    help="Soma anual de empenhos SEM modalidade de licitação, por fornecedor e natureza, acima da qual há indício de fracionamento.",
+    help="Usado só no teste de fracionamento. Soma, por exercício + fornecedor + natureza, dos empenhos **sem** modalidade de licitação informada; "
+         "quando há 2 ou mais empenhos e a soma passa deste valor, o grupo é apontado. "
+         "Padrão: R$ 59.906,02 (limite de dispensa para compras/serviços, Lei 14.133/2021 atualizado). "
+         "Para exercícios antigos sob a Lei 8.666/93 use R$ 17.600,00 (ou R$ 8.000,00 antes de 2018).",
 )
-tolerancia = st.sidebar.number_input("Tolerância de valor (R$)", min_value=0.0, value=0.01, step=0.01)
-dias_pagto = st.sidebar.number_input("Pagamento em menos de (dias) após a liquidação", min_value=0, value=0,
-                                     help="0 = aponta apenas pagamento anterior à liquidação.")
+tolerancia = st.sidebar.number_input(
+    "Tolerância de valor (R$)", min_value=0.0, value=0.01, step=0.01,
+    help="Diferença mínima para apontar 'pago acima do liquidado', 'liquidado acima do empenhado' e 'saldo negativo'. "
+         "Evita apontamentos por arredondamento de centavos; aumente para ver só divergências relevantes.",
+)
+dias_pagto = st.sidebar.number_input(
+    "Pagamento em menos de (dias) após a liquidação", min_value=0, value=0,
+    help="Controla o teste 'pagamento anterior à liquidação'. Com **0**, aponta apenas pagamentos datados **antes** da liquidação. "
+         "Com N > 0, aponta também pagamentos feitos em menos de N dias após a liquidação (útil para checar prazo mínimo de conferência).",
+)
 
 if not sel_anos:
     st.warning("Selecione ao menos um exercício.")
@@ -92,7 +106,7 @@ testes.append((
 t = pn.assign(DATA_LIQUIDACAO=pn["LIQUIDACAO"].map(data_liq))
 t = t[t["DATA_LIQUIDACAO"].notna()]
 t = t.assign(DIAS=(t["DATA"] - t["DATA_LIQUIDACAO"]).dt.days)
-t = t[t["DIAS"] < dias_pagto if dias_pagto > 0 else t["DIAS"] < 0]
+t = t[t["DIAS"] < dias_pagto] if dias_pagto > 0 else t[t["DIAS"] < 0]
 testes.append((
     "Pagamento anterior à data da liquidação", "alta",
     t[["DATA", "DATA_LIQUIDACAO", "DIAS", "PAGAMENTO", "LIQUIDACAO", "EMPENHO", "FORNECEDOR_NOME", "VALOR_PAGO"]].sort_values("DIAS"),
@@ -146,7 +160,10 @@ testes.append((
 ))
 
 # 10. Lançamentos em fim de semana ----------------------------------------------
-fds = lambda df: df[df["DATA"].dt.dayofweek >= 5]
+def fds(df: pd.DataFrame) -> pd.DataFrame:
+    return df[df["DATA"].dt.dayofweek >= 5]
+
+
 t = pd.concat([
     fds(en).assign(BASE="Empenho", CHAVE=lambda d: d["EMPENHO"], VALOR=lambda d: d["VALOR"]),
     fds(ln).assign(BASE="Liquidação", CHAVE=lambda d: d["LIQUIDACAO"], VALOR=lambda d: d["VALOR"]),
@@ -223,7 +240,7 @@ st.dataframe(resumo, hide_index=True, width="stretch")
 
 # ---------------------------------------------------------------- detalhes
 st.subheader("Detalhamento")
-so_com_apontamento = st.toggle("Mostrar apenas testes com apontamentos", value=True)
+so_com_apontamento = st.toggle("Mostrar apenas testes com apontamentos", value=True, help="Desligue para listar também os testes que não encontraram nada nos exercícios selecionados.")
 for i, (titulo, g, t, explicacao) in enumerate(testes):
     if so_com_apontamento and t.empty:
         continue

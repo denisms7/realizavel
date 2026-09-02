@@ -1,4 +1,3 @@
-import pandas as pd
 import streamlit as st
 
 from utils import dados
@@ -35,7 +34,7 @@ saldo = df.groupby("EMPENHO")["VALOR"].sum().to_frame("EMPENHADO")
 saldo["LIQUIDADO"] = liq_por_emp.reindex(saldo.index).fillna(0)
 saldo["SALDO"] = saldo["EMPENHADO"] - saldo["LIQUIDADO"]
 saldo = saldo.join(
-    df.drop_duplicates("EMPENHO").set_index("EMPENHO")[["DATA", "FORNECEDOR_NOME", "NATUREZA", "DESCRICAO"]]
+    df_full[~df_full["ESTORNO"]].drop_duplicates("EMPENHO").set_index("EMPENHO")[["DATA", "FORNECEDOR_NOME", "NATUREZA", "DESCRICAO"]]
 )
 
 a1, a2, a3 = st.tabs(["Liquidado acima do empenhado", "Empenhos sem liquidação", "Estornos"])

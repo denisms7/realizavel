@@ -1,3 +1,4 @@
+import pandas as pd
 import streamlit as st
 
 from utils import dados
@@ -42,12 +43,12 @@ for col, (base, df) in zip(cols, bases.items()):
         st.metric(base.capitalize(), f"{len(df):,}".replace(",", "."), help="Quantidade de linhas")
         dados.texto(f"**Total {vcol}:** {dados.brl(df[vcol].sum())}")
         dmin, dmax = df["DATA"].min(), df["DATA"].max()
-        st.write(f"**Período:** {dmin:%d/%m/%Y} a {dmax:%d/%m/%Y}")
+        if pd.notna(dmin) and pd.notna(dmax):
+            st.write(f"**Período:** {dmin:%d/%m/%Y} a {dmax:%d/%m/%Y}")
         st.write(f"**Exercícios:** {int(df['ANO'].min())} – {int(df['ANO'].max())}")
 
 # ---------------------------------------------------------------- por exercício
 st.subheader("Linhas por exercício")
-import pandas as pd
 
 cont = pd.DataFrame(
     {b.capitalize(): df["ANO"].value_counts() for b, df in bases.items()}
@@ -55,15 +56,41 @@ cont = pd.DataFrame(
 cont.index = cont.index.astype(str)
 st.bar_chart(cont)
 
+# ---------------------------------------------------------------- exportação
+st.subheader("Exportar dados tratados")
+st.caption(
+    "CSVs com os tipos já convertidos (datas, valores, inteiros), chaves de estorno corrigidas e colunas derivadas "
+    "(`ANO`, `MES`, `ESTORNO`, `FORNECEDOR_COD/NOME`, `LIQUIDO`…). Formato: UTF-8, separador `;`, decimal `,` — abre direto no Excel."
+)
+cols_exp = st.columns(len(bases) + 1)
+for col, base in zip(cols_exp, bases):
+    col.download_button(
+        f"⬇️ {base.capitalize()}",
+        dados.exportar_csv(base, dados.mtime_de(base)),
+        dados.nome_exportacao(base),
+        "text/csv",
+        key=f"exp_{base}",
+        width="stretch",
+    )
+if len(bases) == len(dados.ARQUIVOS):
+    cols_exp[-1].download_button(
+        "📦 Todas (ZIP)",
+        dados.exportar_zip(tuple(dados.mtime_de(b) for b in dados.ARQUIVOS)),
+        "scp550_tratado.zip",
+        "application/zip",
+        key="exp_zip",
+        width="stretch",
+    )
+
 # ---------------------------------------------------------------- detalhe
 st.subheader("Detalhe por base")
-escolha = st.selectbox("Base", list(bases), format_func=str.capitalize)
+escolha = st.selectbox("Base", list(bases), format_func=str.capitalize, help="Escolhe qual das três bases aparece nas abas abaixo (amostra, qualidade e regras). Não afeta as outras páginas.")
 df = bases[escolha]
 
 aba_amostra, aba_qualidade, aba_tipos = st.tabs(["Amostra", "Qualidade dos dados", "Regras de tratamento"])
 
 with aba_amostra:
-    n = st.slider("Linhas exibidas", 10, 500, 50, step=10)
+    n = st.slider("Linhas exibidas", 10, 500, 50, step=10, help="Quantidade de linhas iniciais da base tratada mostradas na amostra. Só limita a exibição; não filtra dados.")
     st.dataframe(df.head(n), width="stretch")
 
 with aba_qualidade:
@@ -79,7 +106,7 @@ with aba_tipos:
 - **Chave dos estornos:** em Empenhos e Liquidações, na linha de estorno a coluna `EMPENHO`/`LIQUIDACAO` traz o número do próprio estorno;
   o lançamento original está em `NUMERO.../EXERCICIO...`. A chave é regravada para apontar ao original e o número do estorno fica em `EMPENHO_ESTORNO`/`LIQUIDACAO_ESTORNO`.
 - **Inteiros com ponto de milhar** (`{", ".join(dados.COLUNAS_INTEIRO[escolha])}`): `2.013` → `2013`.
-- **Linhas com `;` dentro de um campo:** os pedaços excedentes são reagrupados na coluna `{dados.COLUNA_ABSORVE[escolha]}`.
+- **Linhas com `;` dentro de um campo:** os pedaços excedentes são reagrupados em uma das colunas `{', '.join(dados.COLUNAS_ABSORVEM[escolha])}`, escolhendo a hipótese em que datas e valores voltam a ser válidos.
 - **Colunas derivadas:** `ANO` (extraído da chave `{dados.COLUNAS_CHAVE[escolha][0]}` = número/ano), `MES`,
   `FORNECEDOR_COD` e `FORNECEDOR_NOME` (separados de `FORNECEDORES`).
 """

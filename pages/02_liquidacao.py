@@ -32,7 +32,7 @@ st.subheader("Pontos de atenção")
 emp = dados.exigir_base("empenhos")
 pag = dados.exigir_base("pagamentos")
 empenhos_existentes = set(emp["EMPENHO"].dropna())
-pago_por_liq = pag[~pag["ESTORNO"]].groupby("LIQUIDACAO")["VALOR_PAGO"].sum()
+pago_por_liq = pag.groupby("LIQUIDACAO")["VALOR_PAGO"].sum()  # líquido de estornos
 
 a1, a2, a3, a4 = st.tabs(["Sem empenho correspondente", "Liquidado sem pagamento", "Documento fiscal duplicado", "Estornos"])
 with a1:
