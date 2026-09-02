@@ -75,13 +75,14 @@ with aba_tipos:
 - **Codificação / separador:** Latin-1, `;`.
 - **Datas** (`{", ".join(dados.COLUNAS_DATA[escolha])}`): formato `dd.mm.aaaa`.
 - **Valores** (`{", ".join(dados.COLUNAS_VALOR[escolha])}`): ponto decimal; valores entre parênteses são negativos.
+- **Valor negativo = estorno** do lançamento original (anulação de empenho, estorno de liquidação/pagamento); gera as colunas `ESTORNO` e `LANCAMENTO`.
 - **Inteiros com ponto de milhar** (`{", ".join(dados.COLUNAS_INTEIRO[escolha])}`): `2.013` → `2013`.
 - **Linhas com `;` dentro de um campo:** os pedaços excedentes são reagrupados na coluna `{dados.COLUNA_ABSORVE[escolha]}`.
 - **Colunas derivadas:** `ANO` (extraído da chave `{dados.COLUNAS_CHAVE[escolha][0]}` = número/ano), `MES`,
   `FORNECEDOR_COD` e `FORNECEDOR_NOME` (separados de `FORNECEDORES`).
 """
         + (
-            "- **Pagamentos:** `LIQUIDO` é recalculado como `VALOR_PAGO - RETENCOES`; `ESTORNO` indica linhas com `ESTORNO_PAGAMENTO` preenchido."
+            "- **Pagamentos:** `LIQUIDO` é recalculado como `VALOR_PAGO - RETENCOES`; nos pagamentos o valor negativo coincide com `ESTORNO_PAGAMENTO` preenchido."
             if escolha == "pagamentos"
             else ""
         )

@@ -13,13 +13,7 @@ if df.empty:
     st.stop()
 
 # ---------------------------------------------------------------- KPIs
-positivos = df.loc[df["VALOR"] > 0, "VALOR"].sum()
-anulacoes = -df.loc[df["VALOR"] < 0, "VALOR"].sum()
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Registros", f"{len(df):,}".replace(",", "."))
-c2.metric("Empenhado (bruto)", dados.brl(positivos))
-c3.metric("Anulações", dados.brl(anulacoes))
-c4.metric("Empenhado líquido", dados.brl(df["VALOR"].sum()))
+dados.kpis_valor(df, "VALOR", "Empenhado")
 
 # ---------------------------------------------------------------- gráficos
 aba_mes, aba_forn, aba_nat = st.tabs(["Por mês", "Por fornecedor", "Por natureza"])
@@ -44,23 +38,23 @@ saldo = saldo.join(
     df.drop_duplicates("EMPENHO").set_index("EMPENHO")[["DATA", "FORNECEDOR_NOME", "NATUREZA", "DESCRICAO"]]
 )
 
-a1, a2, a3 = st.tabs(["Liquidado acima do empenhado", "Empenhos sem liquidação", "Anulações"])
+a1, a2, a3 = st.tabs(["Liquidado acima do empenhado", "Empenhos sem liquidação", "Estornos"])
 with a1:
     acima = saldo[saldo["SALDO"] < -0.005].sort_values("SALDO")
     st.write(f"{len(acima)} empenho(s) com liquidação superior ao valor empenhado.")
-    st.dataframe(acima, width="stretch")
+    dados.tabela(acima)
 with a2:
     sem = saldo[(saldo["LIQUIDADO"] == 0) & (saldo["EMPENHADO"] > 0)].sort_values("EMPENHADO", ascending=False)
     st.write(f"{len(sem)} empenho(s) sem nenhuma liquidação — total {dados.brl(sem['EMPENHADO'].sum())}.")
-    st.dataframe(sem, width="stretch")
+    dados.tabela(sem)
 with a3:
-    neg = df[df["VALOR"] < 0].sort_values("VALOR")
-    st.write(f"{len(neg)} lançamento(s) de anulação/estorno.")
-    st.dataframe(neg, width="stretch")
+    est = df[df["ESTORNO"]].sort_values("VALOR")
+    st.write(f"{len(est)} estorno(s)/anulação(ões) de empenho — total {dados.brl(-est['VALOR'].sum())}.")
+    dados.tabela(est, hide_index=True)
 
 # ---------------------------------------------------------------- tabela
 st.subheader("Registros")
-st.dataframe(df, width="stretch", hide_index=True)
+dados.tabela(df, hide_index=True)
 st.download_button(
     "⬇️ Baixar CSV filtrado",
     df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),

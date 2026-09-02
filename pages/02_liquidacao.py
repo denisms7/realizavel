@@ -12,11 +12,10 @@ if df.empty:
     st.stop()
 
 # ---------------------------------------------------------------- KPIs
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Registros", f"{len(df):,}".replace(",", "."))
-c2.metric("Liquidado", dados.brl(df["VALOR"].sum()))
-c3.metric("Empenhos distintos", f"{df['EMPENHO'].nunique():,}".replace(",", "."))
-c4.metric("Fornecedores distintos", f"{df['FORNECEDOR_NOME'].nunique():,}".replace(",", "."))
+dados.kpis_valor(df, "VALOR", "Liquidado")
+st.caption(
+    f"{df['EMPENHO'].nunique():,} empenho(s) e {df['FORNECEDOR_NOME'].nunique():,} fornecedor(es) distintos.".replace(",", ".")
+)
 
 # ---------------------------------------------------------------- gráficos
 aba_mes, aba_forn, aba_doc = st.tabs(["Por mês", "Por fornecedor", "Por tipo de documento"])
@@ -35,12 +34,12 @@ pag = dados.exigir_base("pagamentos")
 empenhos_existentes = set(emp["EMPENHO"].dropna())
 pago_por_liq = pag[~pag["ESTORNO"]].groupby("LIQUIDACAO")["VALOR_PAGO"].sum()
 
-a1, a2, a3 = st.tabs(["Sem empenho correspondente", "Liquidado sem pagamento", "Documento fiscal duplicado"])
+a1, a2, a3, a4 = st.tabs(["Sem empenho correspondente", "Liquidado sem pagamento", "Documento fiscal duplicado", "Estornos"])
 with a1:
     sem_emp = df[~df["EMPENHO"].isin(empenhos_existentes)]
     st.write(f"{len(sem_emp)} liquidação(ões) cujo empenho não consta na base de empenhos "
              "(pode ser empenho de exercício anterior / restos a pagar).")
-    st.dataframe(sem_emp, width="stretch", hide_index=True)
+    dados.tabela(sem_emp, hide_index=True)
 with a2:
     resumo = df.groupby("LIQUIDACAO").agg(
         DATA=("DATA", "min"), FORNECEDOR_NOME=("FORNECEDOR_NOME", "first"),
@@ -50,18 +49,22 @@ with a2:
     resumo["A_PAGAR"] = resumo["LIQUIDADO"] - resumo["PAGO"]
     pend = resumo[resumo["A_PAGAR"] > 0.005].sort_values("A_PAGAR", ascending=False)
     st.write(f"{len(pend)} liquidação(ões) com saldo a pagar — total {dados.brl(pend['A_PAGAR'].sum())}.")
-    st.dataframe(pend, width="stretch")
+    dados.tabela(pend)
 with a3:
     chave = ["FORNECEDOR_COD", "TIPO_DOCUMENTO", "SERIE"]
-    dup = df[df["TIPO_DOCUMENTO"].notna() & (df["TIPO_DOCUMENTO"] != "")]
+    dup = df[~df["ESTORNO"] & df["TIPO_DOCUMENTO"].notna() & (df["TIPO_DOCUMENTO"] != "")]
     dup = dup[dup.duplicated(chave, keep=False)].sort_values(chave + ["DATA"])
     st.write(f"{len(dup)} linha(s) com o mesmo fornecedor + documento + série, em liquidações diferentes.")
-    st.dataframe(dup[["DATA", "LIQUIDACAO", "EMPENHO", "FORNECEDOR_NOME", "TIPO_DOCUMENTO", "SERIE", "VALOR", "DESCRICAO"]],
-                 width="stretch", hide_index=True)
+    dados.tabela(dup[["DATA", "LIQUIDACAO", "EMPENHO", "FORNECEDOR_NOME", "TIPO_DOCUMENTO", "SERIE", "VALOR", "DESCRICAO"]], hide_index=True)
+
+with a4:
+    est = df[df["ESTORNO"]].sort_values("VALOR")
+    st.write(f"{len(est)} estorno(s) de liquidação — total {dados.brl(-est['VALOR'].sum())}.")
+    dados.tabela(est, hide_index=True)
 
 # ---------------------------------------------------------------- tabela
 st.subheader("Registros")
-st.dataframe(df, width="stretch", hide_index=True)
+dados.tabela(df, hide_index=True)
 st.download_button(
     "⬇️ Baixar CSV filtrado",
     df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),

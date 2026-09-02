@@ -129,10 +129,15 @@ def _tratar(df: pd.DataFrame, base: str) -> pd.DataFrame:
         df["FORNECEDOR_COD"] = pd.to_numeric(forn[0], errors="coerce").astype("Int64")
         df["FORNECEDOR_NOME"] = forn[1].fillna(df["FORNECEDORES"]).str.strip()
 
+    # Regra do SCP-550: valor negativo é um ESTORNO do lançamento original
+    # (anulação de empenho, estorno de liquidação ou de pagamento).
+    col_valor = COLUNAS_VALOR[base][0]
+    df["ESTORNO"] = df[col_valor].fillna(0) < 0
+    df["LANCAMENTO"] = df["ESTORNO"].map({True: "Estorno", False: "Normal"}).astype("string")
+
     if base == "pagamentos":
         # LIQUIDO vem com formatação inconsistente; recalculado.
         df["LIQUIDO"] = df["VALOR_PAGO"].fillna(0) - df["RETENCOES"].fillna(0)
-        df["ESTORNO"] = df["ESTORNO_PAGAMENTO"].fillna("").ne("")
 
     return df
 
@@ -231,6 +236,14 @@ def filtro_padrao(df: pd.DataFrame, chave: str) -> pd.DataFrame:
     """Barra lateral com filtros comuns (ano, unidade, natureza, fonte, fornecedor, texto)."""
     st.sidebar.header("Filtros")
 
+    tipo = st.sidebar.radio(
+        "Lançamentos", ["Todos", "Somente normais", "Somente estornos"], key=f"{chave}_tipo", horizontal=True
+    )
+    if tipo == "Somente normais":
+        df = df[~df["ESTORNO"]]
+    elif tipo == "Somente estornos":
+        df = df[df["ESTORNO"]]
+
     anos = sorted(df["ANO"].dropna().unique().tolist())
     sel_anos = st.sidebar.multiselect("Exercício", anos, default=anos[-1:] if anos else [], key=f"{chave}_ano")
     if sel_anos:
@@ -254,3 +267,31 @@ def filtro_padrao(df: pd.DataFrame, chave: str) -> pd.DataFrame:
             df = df[df["DESCRICAO"].str.contains(txt, case=False, na=False)]
 
     return df
+
+
+COLUNAS_TOTALIZAVEIS = [
+    "VALOR", "VALOR_PAGO", "RETENCOES", "LIQUIDO",
+    "EMPENHADO", "LIQUIDADO", "SALDO", "PAGO", "A_PAGAR", "DIFERENCA",
+]
+
+
+def tabela(df: pd.DataFrame, **kwargs) -> None:
+    """Exibe um DataFrame e, logo abaixo, a linha de totais das colunas de valor."""
+    kwargs.setdefault("width", "stretch")
+    st.dataframe(df, **kwargs)
+
+    cols = [c for c in COLUNAS_TOTALIZAVEIS if c in df.columns and pd.api.types.is_numeric_dtype(df[c])]
+    partes = [f"**Total** — {len(df):,} registro(s)".replace(",", ".")]
+    partes += [f"**{c}:** {brl(df[c].sum())}" for c in cols]
+    st.markdown(" &nbsp;·&nbsp; ".join(partes))
+
+
+def kpis_valor(df: pd.DataFrame, col: str, rotulo: str) -> None:
+    """Quatro métricas padrão: registros, bruto (normais), estornos e líquido."""
+    normais = df.loc[~df["ESTORNO"], col].sum()
+    estornos = -df.loc[df["ESTORNO"], col].sum()
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Registros", f"{len(df):,}".replace(",", "."), help=f"{int(df['ESTORNO'].sum())} estorno(s)")
+    c2.metric(f"{rotulo} (bruto)", brl(normais))
+    c3.metric("Estornos", brl(estornos))
+    c4.metric(f"{rotulo} líquido", brl(normais - estornos))

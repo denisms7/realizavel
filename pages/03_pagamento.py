@@ -15,12 +15,10 @@ efetivos = df[~df["ESTORNO"]]
 estornos = df[df["ESTORNO"]]
 
 # ---------------------------------------------------------------- KPIs
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Registros", f"{len(df):,}".replace(",", "."))
-c2.metric("Pago (bruto)", dados.brl(efetivos["VALOR_PAGO"].sum()))
-c3.metric("Retenções", dados.brl(efetivos["RETENCOES"].sum()))
-c4.metric("Pago líquido", dados.brl(efetivos["LIQUIDO"].sum()))
-st.caption(f"{len(estornos)} linha(s) de estorno (total {dados.brl(estornos['VALOR_PAGO'].sum())}) excluídas dos totais acima.")
+dados.kpis_valor(df, "VALOR_PAGO", "Pago")
+c1, c2 = st.columns(2)
+c1.metric("Retenções (líquido de estornos)", dados.brl(df["RETENCOES"].sum()))
+c2.metric("Pago líquido após retenções", dados.brl(df["LIQUIDO"].sum()))
 
 # ---------------------------------------------------------------- gráficos
 aba_mes, aba_forn, aba_fonte = st.tabs(["Por mês", "Por fornecedor", "Por fonte"])
@@ -46,19 +44,19 @@ with a1:
     acima = pago[pago["LIQUIDADO"].notna() & (pago["PAGO"] - pago["LIQUIDADO"] > 0.005)]
     acima = acima.assign(DIFERENCA=acima["PAGO"] - acima["LIQUIDADO"]).sort_values("DIFERENCA", ascending=False)
     st.write(f"{len(acima)} liquidação(ões) com pagamento superior ao valor liquidado.")
-    st.dataframe(acima, width="stretch")
+    dados.tabela(acima)
 with a2:
     sem = efetivos[~efetivos["LIQUIDACAO"].isin(set(liq["LIQUIDACAO"].dropna()))]
     st.write(f"{len(sem)} pagamento(s) cuja liquidação não consta na base "
              "(pode ser restos a pagar de exercício anterior).")
-    st.dataframe(sem, width="stretch", hide_index=True)
+    dados.tabela(sem, hide_index=True)
 with a3:
     st.write(f"{len(estornos)} estorno(s).")
-    st.dataframe(estornos, width="stretch", hide_index=True)
+    dados.tabela(estornos, hide_index=True)
 
 # ---------------------------------------------------------------- tabela
 st.subheader("Registros")
-st.dataframe(df, width="stretch", hide_index=True)
+dados.tabela(df, hide_index=True)
 st.download_button(
     "⬇️ Baixar CSV filtrado",
     df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
