@@ -4,9 +4,7 @@ from utils import dados
 
 st.title("⚙️ Fonte de Dados")
 st.caption(
-    "Os dados são lidos dos arquivos CSV exportados do SCP-550 que estão na pasta "
-    f"`{dados.PASTA_DADOS}`. Substitua os arquivos nessa pasta e clique em **Recarregar** "
-    "para atualizar todas as páginas."
+    "Os dados são lidos dos arquivos CSV exportados do SCP-550 fornecidos pelas Sysmar."
 )
 
 # ---------------------------------------------------------------- arquivos

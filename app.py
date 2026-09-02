@@ -7,7 +7,7 @@ st.set_page_config(
 )
 
 pages = {
-    "➡️ SCP": [
+    "➡️ SCP-550": [
         st.Page("pages/01_empenho.py", title="Empenho"),
         st.Page("pages/02_liquidacao.py", title="Liquidação"),
         st.Page("pages/03_pagamento.py", title="Pagamento"),
