@@ -17,12 +17,6 @@ faltando = info[info["Encontrado"] == "❌"]["Arquivo"].tolist()
 if faltando:
     st.error("Arquivo(s) não encontrado(s): " + ", ".join(faltando))
 
-col1, col2 = st.columns([1, 5])
-if col1.button("🔄 Recarregar", type="primary"):
-    dados.limpar_cache()
-    st.toast("Cache limpo. Os dados serão relidos do disco.")
-    st.rerun()
-col2.caption("O cache é invalidado automaticamente quando a data de modificação de um arquivo muda.")
 
 # ---------------------------------------------------------------- carga
 st.subheader("Resumo das bases")
