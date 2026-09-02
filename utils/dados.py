@@ -263,6 +263,101 @@ def exigir_base(base: str) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------- #
+# Objeto da despesa (classificação da DESCRICAO por palavra-chave)
+# --------------------------------------------------------------------------- #
+# A base não tem campo de objeto: o que existe é a DESCRICAO em texto livre, com
+# os acentos exportados como "." (AQUISI..O, SA.DE, M.S) e cortada em 150
+# caracteres em ~30% dos empenhos. As regras abaixo são casadas em MAIÚSCULAS e
+# os "." dos padrões aproveitam justamente os acentos quebrados.
+#
+# A ORDEM IMPORTA: cada empenho recebe a primeira categoria que casar, então as
+# regras mais específicas vêm antes das genéricas ("Manutenção e conserto" e
+# "Material de consumo" são propositalmente as últimas, como redes de segurança).
+CATEGORIAS_OBJETO: list[tuple[str, str]] = [
+    ("Folha de pagamento", r"FOLHA DE PAGAMENTO|VENCIMENTO|SAL.RIO|13.{0,3}SAL|F.RIAS|RESCIS|GRATIFICA|HORA.EXTRA|SUBS.DIO"),
+    ("Encargos e obrigações patronais", r"\bINSS\b|\bFGTS\b|PASEP|\bIRRF\b|PREVID|CONTRIBUI..O PATRONAL|ENCARGO"),
+    ("Diárias e ajuda de custo", r"DI.RIA|AJUDA DE CUSTO|AUX.LIO TRABALHADOR|AUXILIO TRABALHADOR"),
+    ("Bolsas, estágio e benefícios", r"BOLSA|ESTAGI|AUX.LIO|AUXILIO|BENEF.CIO EVENTUAL|CESTA B.SICA"),
+    ("Sentenças judiciais e precatórios", r"SENTEN.A|PRECAT.RIO|A..O JUDICIAL|PROCESSO DE N|DEP.SITO JUDICIAL"),
+    ("Adiantamento e suprimento de fundos", r"ADIANTAMENTO|SUPRIMENTO DE FUNDO|DESPESA DE PEQUENO VALOR"),
+    ("Combustível e lubrificantes", r"COMBUST|GASOLINA|DIESEL|ETANOL|LUBRIFIC|\bARLA\b"),
+    ("Medicamentos e serviços de saúde", r"MEDICAMENTO|F.RMACO|FARMACO|INSUMO.{0,12}SA.DE|MATERIAL HOSPITALAR|ODONTOL|LABORAT|EXAME|CONSULTA|PR.TESE|.RTESE|HOSPITALAR|SANAT|MANIC|PACIENTE|NEFROLOG|FISIOTERAP|ORTOPED|CARDIOL|RADIOL|ULTRASSO|TOMOGRAF"),
+    ("Gêneros alimentícios", r"G.NEROS ALIMENT|GENEROS ALIMENT|ALIMENTA..O|MERENDA|AGRICULTURA FAMILIAR|HORTIFRUT|\bCARNE\b|\bLEITE\b|\bP.O\b|PANIFIC"),
+    ("Obras e serviços de engenharia", r"\bOBRA|PAVIMENTA|RECAPE|CONSTRU..O|CONSTRUCAO|REFORMA|ENGENHARIA|TERRAPLEN|DRENAGEM|CAL.AMENTO|CALCAMENTO"),
+    ("Manutenção de veículos e máquinas", r"PLACA\s*[A-Z]{3}[\s-]?\d|PNEU|\bPE.AS\b|\bPECAS\b|VE.CULO|CAMINH.O|MEC.NIC|RETIFICA|FUNILARIA|ALINHAMENTO|M.QUINAS? E EQUIP|TRATOR|MOTONIVEL|RETROESCAV"),
+    ("Material de construção e manutenção predial", r"CIMENTO|AREIA|BRITA|TIJOLO|MADEIRA|VERGALH|MALHA Q|ASFALTO|CONCRETO|MATERIA.{0,4} DE CONSTRU|MANUTEN..O PREDIAL|BENS IM.VEIS|EL.TRIC.{0,3} PREDIAL|HIDR.ULIC"),
+    ("Material de expediente e informática", r"EXPEDIENTE|\bPAPEL\b|TONER|CARTUCHO|INFORM.TICA|COMPUTADOR|IMPRESSORA|CARTOLINA"),
+    ("Água, energia e telefonia", r"ENERGIA EL.TRICA|ENERGIA ELETRICA|\bCOPEL\b|SANEPAR|[\s.]GUA\b|TELEFON|TELECOMUNICA|\bTEL[:.]|INTERNET|CORREIO"),
+    ("Publicidade e divulgação", r"PROPAGANDA|PUBLICIDADE|CARRO DE SOM|AN.NCIO|DIVULGA..O|PUBLICA..O.{0,15}EDITAL"),
+    ("Locação e aluguel", r"LOCA..O|LOCACAO|ALUGUEL|ARRENDAMENTO"),
+    ("Transporte, frete e passagens", r"PASSAGE|TRANSPORTE|\bFRETE|VIAGEM|.NIBUS|ONIBUS"),
+    ("Seguros, tributos e tarifas", r"SEGURO|\bIPVA\b|LICENCIAMENTO|\bTAXA\b|TRIBUTO|\bJUROS\b|\bMULTA\b|TARIFA"),
+    ("Serviços de terceiros — PJ", r"SERVI.OS? DE TERCEIROS.{0,25}JUR|PESSOA JUR.DICA|PESSOA JURIDICA|EMPRESA ESPECIALIZADA"),
+    ("Serviços de terceiros — PF", r"SERVI.OS? DE TERCEIROS.{0,25}F.SICA|PESSOA F.SICA|PESSOA FISICA|\bRPA\b"),
+    ("Manutenção e conserto (outros)", r"MANUTEN..O|MANUTENCAO|CONSERTO|CONSERVA..O|REPARO|INSTALA..O"),
+    ("Material de consumo (genérico)", r"MATERIAL DE CONSUMO|MATERIAIS DE CONSUMO|MATERIAL DE|MATERIAIS "),
+]
+SEM_CATEGORIA = "Outros"
+
+# A base traz só o código da unidade (órgão.unidade); não há campo com o nome da
+# secretaria. Os nomes abaixo foram INFERIDOS do texto dos empenhos (a descrição
+# costuma citar "PARA MANUTENÇÃO DA SECRETARIA DE X") e concordam com 20% a 60%
+# das citações de cada órgão — corrija aqui se souber o nome oficial.
+ORGAOS = {
+    "02": "Gabinete e Governo",
+    "03": "Administração",
+    "04": "Fazenda",
+    "05": "Desenvolvimento Econômico",
+    "06": "Saúde",
+    "07": "Assistência Social",
+    "08": "Educação, Cultura e Esportes",
+    "09": "Obras e Infraestrutura",
+    "10": "Cultura e Turismo",
+    "11": "Agricultura e Meio Ambiente",
+    "12": "Fomento e Agropecuária",
+    "13": "Indústria e Comércio",
+}
+
+# Quantidade de itens: só uma minoria das descrições traz. Dois formatos existem —
+# o de combustível ("1.015,80 L X 2,96 = R$ 3.006,76") e o de item de nota
+# ("TONER HP 285A    2UN    55,00    110,00").
+_RE_QTD_COMBUSTIVEL = re.compile(r"(\d[\d.]*(?:,\d+)?)\s*(?:L|LITROS?)\s*X\s*(?:R\$\s*)?\d[\d.]*,\d{2}", re.I)
+_RE_QTD_ITEM = re.compile(r"(?:\s|^)(\d[\d.]*(?:,\d+)?)\s?(UN|UND|UNID|KG|LT|M2|M3|MT|CX|PCT|PC|SC|DZ|TN|TON|GL|PAR|RL)\b")
+
+
+def classificar_objeto(descricao: pd.Series) -> pd.Series:
+    """Primeira categoria de CATEGORIAS_OBJETO que casar; senão 'Outros'."""
+    texto = descricao.fillna("").astype("string").str.upper()
+    cat = pd.Series(SEM_CATEGORIA, index=texto.index, dtype="object")
+    for nome, padrao in CATEGORIAS_OBJETO:
+        livres = cat.eq(SEM_CATEGORIA)
+        if not livres.any():
+            break
+        cat[livres & texto.str.contains(padrao, regex=True, na=False)] = nome
+    return cat.astype("string")
+
+
+@st.cache_data(show_spinner="Classificando o objeto dos empenhos...")
+def empenhos_por_objeto(mtime: float | None = None) -> pd.DataFrame:
+    """Empenhos com OBJETO, SECRETARIA e a quantidade que der para extrair."""
+    df = carregar_base("empenhos", mtime)
+    texto = df["DESCRICAO"].fillna("").astype("string").str.upper()
+
+    df = df.assign(OBJETO=classificar_objeto(df["DESCRICAO"]))
+    df["ORGAO"] = df["UNIDADE"].astype("string").str.slice(0, 2)
+    df["SECRETARIA"] = df["ORGAO"].map(ORGAOS).fillna("Não identificada").astype("string")
+    df["SECRETARIA"] = df["ORGAO"].fillna("--") + " — " + df["SECRETARIA"]
+
+    comb = texto.str.extract(_RE_QTD_COMBUSTIVEL)[0]
+    item = texto.str.extract(_RE_QTD_ITEM)
+    qtd = comb.fillna(item[0])
+    df["QUANTIDADE"] = _para_float_br(qtd)
+    df["UN_MEDIDA"] = item[1].where(comb.isna(), "L").astype("string")
+    df["DESCRICAO_TRUNCADA"] = df["DESCRICAO"].fillna("").str.len() >= 150
+    return df
+
+
+# --------------------------------------------------------------------------- #
 # Extratos bancários (data/extratos/*.csv)
 # --------------------------------------------------------------------------- #
 # Lançamentos que apenas movimentam a aplicação financeira da própria conta:

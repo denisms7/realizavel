@@ -12,6 +12,7 @@ pages = {
         st.Page("pages/01_empenho.py", title="Empenho"),
         st.Page("pages/02_liquidacao.py", title="Liquidação"),
         st.Page("pages/03_pagamento.py", title="Pagamento"),
+        # st.Page("pages/06_objeto.py", title="Custos por objeto"),
         st.Page("pages/05_irregularidades.py", title="Possíveis irregularidades SCP-550"),
     ],
 
