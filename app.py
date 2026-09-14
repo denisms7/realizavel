@@ -17,7 +17,7 @@ pages = {
     ],
 
     "➡️ Bancos": [
-        st.Page("pages/04_extrato_182001.py", title="Extrato 18.200-1"),
+        # st.Page("pages/04_extrato_182001.py", title="Extrato 18.200-1"),
         st.Page("pages/04_extrato_apmif.py", title="Extrato APMIF"),
     ],
 }
