@@ -228,7 +228,7 @@ if gran == "Anual":
     # No mensal são ~50 períodos: um número sobre cada barra ficaria ilegível,
     # então o valor aparece só no tooltip.
     grafico = barras + base.mark_text(dy=-7, fontSize=11).encode(text=alt.Text("Rótulo:N"), **comum)
-st.altair_chart(grafico.properties(height=340), use_container_width=True)
+st.altair_chart(grafico.properties(height=340), width='content')
 
 if gran == "Mensal":
     todos = pd.period_range(ext["DATA"].min(), ext["DATA"].max(), freq="M").astype(str)

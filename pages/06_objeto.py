@@ -155,5 +155,5 @@ st.altair_chart(
         tooltip=[alt.Tooltip("Objeto:N"), alt.Tooltip("Secretaria:N"),
                  alt.Tooltip("Valor:Q", title="Valor (R$)", format=",.2f")],
     ).properties(height=520),
-    use_container_width=True,
+    width='content',
 )
